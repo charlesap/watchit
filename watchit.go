@@ -2,8 +2,10 @@ package main
 
 import (
     "fmt"
-    "log"
-    "time"
+//    "log"
+//    "time"
+    "strings"
+    "net"
 
     "github.com/mileusna/crontab"
     "github.com/go-redis/redis"
@@ -18,66 +20,79 @@ func KeeperClient() * redis.Client {
         return client
 }
 
-func GetSettings(client * redis.Client) {
-	err := client.Set("key", "value", 0).Err()
-	if err != nil {
-		panic(err)
-	}
+func RedisStringArray(client * redis.Client, key string) []string {
 
-	val, err := client.Get("hostname").Result()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("hostname", val)
+	return strings.Split(RedisString(client,key),"\n")
+}
 
-	val2, err := client.Get("watchlist").Result()
-	if err == redis.Nil {
-		fmt.Println("key2 does not exist")
-	} else if err != nil {
-		panic(err)
-	} else {
-		fmt.Println("watchlist", val2)
-	}
-	// Output: key value
-	// key2 does not exist
+func RedisString(client * redis.Client, key string) string {
+
+        rv, err := client.Get( key ).Result()
+        if err == redis.Nil {
+                panic("redis key does not exist")
+        } else if err != nil {
+                panic(err)
+        }
+
+        return rv
+}
+
+
+func Enroll(client * redis.Client, ctab *crontab.Crontab, item string, pfmap map[string]string){
+    sa:=strings.Split(item,":")
+    fmt.Println(strings.Trim(sa[1]," "))
+    wh:=strings.Trim(sa[0]," ")
+    wa:=strings.Split( strings.Trim(sa[1]," ")," ")
+    _,prs := pfmap[wa[1]]
+    if !prs {
+      //fmt.Println("need ",wa[1])
+
+      pfmap[wa[1]]=RedisString(client, wa[1])
+    }
+    cf,_ := pfmap[wa[1]]
+
+    ctab.MustAddJob(wh, checkHost, wa[0], cf)
+}
+
+func doCheck(wi string, c string){
+
+    ca:=strings.Split(c," ")
+    if ca[0] == "ping" {
+       fmt.Println("pinging ",wi)
+    }else{
+       fmt.Println("don't know how to ",c," ",wi)
+    }
+
+}
+
+func checkHost(wi string,pf string) {
+    
+    _ , err := net.LookupHost(wi)
+    if err != nil {
+      fmt.Println("Can't find ", wi, " (DNS resolution failed)" )
+    }else{
+      for _,s:= range strings.Split( pf, "\n"){
+        if s[0]!='#'{
+          doCheck( wi, s )
+        }
+      }
+    }
 }
 
 func main() {
 
     ctab := crontab.New() // create cron table
 
-    // AddJob and test the errors
-    err := ctab.AddJob("0 12 1 * *", myFunc) // on 1st day of month
-    if err != nil {
-        log.Println(err)
-        return
-    }    
-
-    // MustAddJob is like AddJob but panics on wrong syntax or problems with func/args
-    // This aproach is similar to regexp.Compile and regexp.MustCompile from go's standard library,  used for easier initialization on startup
-    ctab.MustAddJob("* * * * *", myFunc) // every minute
-    ctab.MustAddJob("0 12 * * *", myFunc3) // noon lauch
-
-    // fn with args
-    ctab.MustAddJob("0 0 * * 1,2", myFunc2, "Monday and Tuesday midnight", 123) 
-    ctab.MustAddJob("*/5 * * * *", myFunc2, "every five min", 0)
-
-    // all your other app code as usual, or put sleep timer for demo
-
     keeper := KeeperClient()
-    GetSettings(keeper)
 
-    time.Sleep(11 * time.Minute)
-}
+    pfmap := make(map[string]string)
 
-func myFunc() {
-    fmt.Println("Helo, world")
-}
+    watchlist := RedisStringArray(keeper,"watchlist")
 
-func myFunc3() {
-    fmt.Println("Noon!")
-}
-
-func myFunc2(s string, n int) {
-    fmt.Println("We have params here, string", s, "and number", n)
+    for _,s:= range watchlist{
+      if s[0] != '#' {
+        Enroll(keeper,ctab,s,pfmap)
+      }
+    }
+    select{ }
 }
