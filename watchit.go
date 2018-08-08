@@ -59,8 +59,10 @@ func doCheck(wi string, c string){
     ca:=strings.Split(c," ")
     if ca[0] == "ping" {
        fmt.Println("pinging ",wi)
+    }else if ca[0] == "snmp"{
+       fmt.Println("querying ",wi)
     }else{
-       fmt.Println("don't know how to ",c," ",wi)
+       fmt.Println("don't know how to use ",c," on ",wi)
     }
 
 }
