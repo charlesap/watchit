@@ -3,9 +3,12 @@ package main
 import (
     "fmt"
 //    "log"
-//    "time"
+    "time"
+    "strconv"
     "strings"
     "net"
+    "os"
+    "os/exec"
 
     "github.com/mileusna/crontab"
     "github.com/go-redis/redis"
@@ -51,14 +54,44 @@ func Enroll(client * redis.Client, ctab *crontab.Crontab, item string, pfmap map
     }
     cf,_ := pfmap[wa[1]]
 
-    ctab.MustAddJob(wh, checkHost, wa[0], cf)
+    ctab.MustAddJob(wh, checkHost, wa[0], cf, client)
 }
 
-func doCheck(wi string, c string){
+func doCheck(wi string, c string, client * redis.Client){
 
     ca:=strings.Split(c," ")
-    if ca[0] == "ping" {
-       fmt.Println("pinging ",wi)
+    if ca[0] == "ping" || ca[0] == "pingvia" {
+       var out []byte
+       chktime:=strconv.FormatInt(time.Now().UTC().UnixNano(),10)
+       if ca[0] == "ping" {
+         out, _ = exec.Command("/bin/ping", "-c", "1",wi).Output()
+       }else{
+         out, _ = exec.Command("/usr/bin/ssh", ca[1], "/bin/ping", "-c", "1",wi).Output()
+       }
+       la:=strings.Split(strings.Split(string(out),"\n")[1]," ")
+       ok:="N"
+       if len(la)>7 && la[2]=="from" {
+         ok="Y"
+       }
+       n,_:=os.Hostname()
+       rtt:=0.0
+       if ok=="Y" {
+          rtt, _ = strconv.ParseFloat(strings.Split(la[7],"=")[1],64)
+       }
+       //fmt.Println("XADD injest MAXLEN ~ 65536 *",wi,"ping","ok",ok,chktime)
+       client.XAdd(&redis.XAddArgs{
+          Stream: "injest",
+          ID: "*",
+          MaxLenApprox: 65536,
+          Values: map[string]interface{}{ "p":wi , "m": "ping" , "e": "ok", "v": ok, "w": n, "t": chktime},
+       }).Result()
+       //fmt.Println("XADD injest *",wi,"ping","ms",rtt,chktime)       
+       client.XAdd(&redis.XAddArgs{
+          Stream: "injest",
+          ID: "*",
+          MaxLenApprox: 65536,
+          Values: map[string]interface{}{ "p": wi , "m": "ping" , "e": "ms", "v": rtt, "w": n, "t": chktime},
+       }).Result()
     }else if ca[0] == "snmp"{
        fmt.Println("querying ",wi)
     }else{
@@ -67,7 +100,7 @@ func doCheck(wi string, c string){
 
 }
 
-func checkHost(wi string,pf string) {
+func checkHost(wi string,pf string, client * redis.Client) {
     
     _ , err := net.LookupHost(wi)
     if err != nil {
@@ -75,7 +108,7 @@ func checkHost(wi string,pf string) {
     }else{
       for _,s:= range strings.Split( pf, "\n"){
         if s[0]!='#'{
-          doCheck( wi, s )
+          doCheck( wi, s, client )
         }
       }
     }
