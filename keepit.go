@@ -4,11 +4,11 @@ import (
     "fmt"
 //    "log"
     "time"
-//    "strconv"
+    "strconv"
     "strings"
 //    "net"
-//    "os"
-//    "os/exec"
+    "os"
+    "os/exec"
 
 //    "github.com/mileusna/crontab"
     "github.com/go-redis/redis"
@@ -43,6 +43,7 @@ func RedisString(client * redis.Client, key string) string {
 func main() {
 
     keeper := KeeperClient()
+    rrdmap := make(map[string]string)
 
 //    watchlist := RedisStringArray(keeper,"watchlist")
 
@@ -54,15 +55,48 @@ func main() {
          //Block: 0,
       }).Result()
       if err != nil {
-          fmt.Println(err)
+//          fmt.Println(err)
       }else{
          ic:=len(res[0].Messages)
         if ic > 0 {
           fmt.Println("got ",ic," items.")
           mid=res[0].Messages[ic-1].ID
           for _,e := range res[0].Messages{
-            fmt.Println(e.ID)
-            fmt.Println(e.Values)
+//            fmt.Println(e.ID) // p: pov, m: method, e: element, v: value, w: watcher, f: frequency, t: type, s: timestamp
+           
+           rrdname:=e.Values["p"].(string)+"-"+e.Values["m"].(string)+"-"+e.Values["e"].(string)
+           filename := rrdname+".rrd"
+           if e.Values["t"].(string)=="r" {
+            _,prs := rrdmap[rrdname]
+            if !prs {
+               
+               
+               if _, err := os.Stat(filename); os.IsNotExist(err) {  
+                   n,_:=strconv.ParseInt(e.Values["s"].(string),10,0)
+                   startat:=fmt.Sprint(n-60)
+                   fmt.Println("/usr/bin/rrdtool", "create", filename, "--step", "1", "--start", startat, "DS:"+rrdname+":GAUGE:600:0:U", "RRA:AVERAGE:0.5:1:525600")
+                   out, err := exec.Command("/usr/bin/rrdtool", "create", filename, "--step", "1", "--start", startat, "DS:"+rrdname+":GAUGE:600:0:U", "RRA:AVERAGE:0.5:1:525600").Output()
+                   if err != nil {
+                      fmt.Println(err)
+                   }else{
+                     fmt.Println(rrdname+".rrd"+" does not exist, created:",string(out))
+                   }
+               } else {
+                   fmt.Println(rrdname+".rrd"+" exists")
+               }
+            }
+                   fmt.Println("updating",rrdname,"via","/usr/bin/rrdtool", "update", filename, e.Values["s"].(string)+":"+e.Values["v"].(string) )
+                   out, err := exec.Command("/usr/bin/rrdtool", "update", filename, e.Values["s"].(string)+":"+e.Values["v"].(string) ).Output()
+                   if err != nil {
+                      fmt.Println(err)
+                   }else{
+                     fmt.Println(rrdname+".rrd"+" updated:",string(out))
+                   }
+
+           }
+           rrdmap[rrdname]=e.Values["s"].(string)
+           fmt.Println(e.Values["p"],e.Values["m"],e.Values["e"],e.Values["v"],e.Values["w"],e.Values["f"],e.Values["t"],e.Values["s"])
+           
           }
         }
       }
