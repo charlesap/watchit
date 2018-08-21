@@ -7,6 +7,8 @@ import (
     "strings"
     "fmt"
     "os"
+    "io/ioutil"
+    "os/exec"
 )
 
 const (
@@ -69,10 +71,58 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "/aidata/"+r.URL.Path[1:])
 	} else if lp > 10 && r.URL.Path[1:11] == "robots.txt" {
 
-	} else if lp > 6 && (r.URL.Path[lp-4:] == ".png" || r.URL.Path[lp-5:] == ".jpeg" || r.URL.Path[lp-5:] == ".json") {
-		http.ServeFile(w, r, "/aidata/keep/"+r.URL.Path[1:])
+	} else if lp > 6 && (r.URL.Path[lp-4:] == ".png" ) {
+             dataname:=r.URL.Path[1:lp-6]
+             span:=r.URL.Path[lp-5:lp-4]
+             st:="now-1h"
+             if span=="h" {
+             }else if span=="d"{
+               st="now-24h"
+             }else if span=="w"{
+               st="now-168h"
+             }else if span=="m"{
+               st="now-744h"
+             }else{
+               span="h"
+             }
+             if _, err := os.Stat(dataname+".rrd"); os.IsNotExist(err) {  
+                w.Header().Set("Content-Type", "text/html")
+                fmt.Fprintf(w, "no dataset %s\n", r.URL.Path)
+             }else{
+                out, err := exec.Command("/usr/bin/rrdtool", 
+                                         "graph",
+                                         dataname+"."+span+".png", 
+                                         "--start", st,
+                                         "--end", "now",
+                                         "DEF:"+dataname+"="+dataname+".rrd:"+dataname+":AVERAGE",
+                                         "LINE2:"+dataname+"#FF0000").Output()
+                if err != nil {
+                  w.Header().Set("Content-Type", "text/html")
+                  fmt.Fprintf(w, "rrd creation error %s<br>%s", err, string(out))
+		}else{
+		  http.ServeFile(w, r, "/aidata/"+dataname+"."+span+".png")
+		}
+             }
 	} else {
-                http.ServeFile(w, r, "/aidata/keep/index.html")
+                w.Header().Set("Content-Type", "text/html")
+                files, err := ioutil.ReadDir(".")
+                if err != nil {
+                   //    log.Fatal(err)
+                }
+                fmt.Fprintf(w, "Streams:<br><br>")
+                for _, file := range files {
+                   lfn:=len(file.Name())
+                   if file.Name()[lfn-4:] == ".rrd" {
+                       fmt.Fprintf(w,"<img src=\"%s.h.png\"> %s ", file.Name()[:lfn-4],file.Name()[:lfn-4])
+                       fmt.Fprintf(w,"<a href=\"%s.h.png\">hour</a> ", file.Name()[:lfn-4])
+                       fmt.Fprintf(w,"<a href=\"%s.d.png\">day</a> ", file.Name()[:lfn-4])
+                       fmt.Fprintf(w,"<a href=\"%s.w.png\">week</a> ", file.Name()[:lfn-4])
+                       fmt.Fprintf(w,"<a href=\"%s.m.png\">month</a><br>", file.Name()[:lfn-4])
+                   }
+                }
+
+                //fmt.Fprintf(w, "hello, you've hit %s\n", r.URL.Path)
+                //http.ServeFile(w, r, "/aidata/keep/index.html")
 	}
 
 	finishTime := time.Now()
